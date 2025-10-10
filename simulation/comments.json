@@ -1,0 +1,67 @@
+{
+  "_note": "Discussion posted onto the pull requests by seed_github.py. All from one GitHub account, so each comment is prefixed with who said it in the fiction. Ordered chronologically per PR.",
+
+  "PAY-3": [
+    {
+      "date": "2025-09-25",
+      "author": "petra",
+      "body": "**Medior dev, 2025-09-25**\n\nSkimmed it. The shape is what we agreed in ADR-0002 — `authorise()` returns a result, `orders` writes it onto the order, done. Nothing to argue with.\n\nPing me when refunds are in and I'll do a proper pass."
+    },
+    {
+      "date": "2025-09-26",
+      "author": "tomas",
+      "body": "**Senior dev, 2025-09-26**\n\nHold on. Every charge above 30 CZK is coming back `402 sca_required` since this morning:\n\n```json\n{\n  \"status\": \"sca_required\",\n  \"challenge_url\": \"https://sandbox.fictionalbank.cz/3ds/challenge/ch_8f2a\",\n  \"challenge_id\": \"ch_8f2a\",\n  \"expires_in\": 600\n}\n```\n\nUnder 30 CZK still settles synchronously, which is why CI is green — every fixture in the suite charges 25 CZK. Nothing real works.\n\nRaised with the bank, ticket #4417. Assuming it's a sandbox glitch, waiting on their reply before I touch anything."
+    },
+    {
+      "date": "2025-09-29",
+      "author": "tomas",
+      "body": "**Senior dev, 2025-09-29**\n\nBank replied on #4417. It is not a glitch:\n\n> The sandbox merchant profile was migrated to the PSD2-compliant configuration on 2025-09-26. Strong customer authentication is mandatory for all transactions above the 30 CZK low-value exemption threshold. This matches the production configuration your merchant account will receive at go-live. The previous behaviour was a sandbox misconfiguration on our side.\n\nSo the exemption we were told about on 2025-08-25 and estimated against never existed. There is nothing to wait for and nothing to revert.\n\nThis means the charge is asynchronous: challenge → customer authenticates at the bank → result arrives on a webhook. We have no inbound endpoints. A payment now needs its own persisted lifecycle, not a boolean on the order. medior dev, PM — ADR incoming, but you should both know now."
+    },
+    {
+      "date": "2025-09-30",
+      "author": "petra",
+      "body": "**Medior dev, 2025-09-30**\n\nRead ADR-0003, agreed, no better option on the table. Two things:\n\n1. This is not the task we estimated. 40h was \"wrap the client PAY-2 already built\". What's described in the ADR is a persisted state machine plus a whole inbound integration surface. That's a different job, not the same job running late.\n2. `orders` gets off lightly — the interface from ADR-0001 absorbs it, `payment_id` instead of a bool. PAY-4 still merges on time.\n\nRe-estimate it in Jira before you carry on. If the hours keep going against the original 40h nobody sees this until the money is gone."
+    },
+    {
+      "date": "2025-10-02",
+      "author": "tomas",
+      "body": "**Senior dev, 2025-10-02**\n\nWebhooks are not what the guide promises. §7.1 says at-least-once *in causal order*. We get at-least-once, and that's it — `challenge.completed` arrives twice, and `payment.captured` sometimes lands before it.\n\nSo the state machine can't walk a sequence. Rewrote it as an event lookup where a duplicate maps onto a no-op and order doesn't matter, plus an idempotency store on `(challenge_id, event_type)`. Another day gone.\n\nAlso: a customer who abandons the bank page produces no terminal event at all, and the sandbox never expires the challenge. Those payments sit in `pending_challenge` forever. Needs a reconciliation poller — which needs a scheduler, which this project doesn't have."
+    },
+    {
+      "date": "2025-10-06",
+      "author": "sona",
+      "body": "**PM, 2025-10-06**\n\nCatching up on this thread. Where are we in hours, and what's the path to something mergeable?\n\nI want to take the SCA change to the client — the exemption was confirmed by their bank in writing before we estimated, and this is fixed price, so right now every one of these hours is ours. But I need a number for the remaining work before I can open that conversation."
+    },
+    {
+      "date": "2025-10-07",
+      "author": "tomas",
+      "body": "**Senior dev, 2025-10-07**\n\nEvery webhook started 400ing overnight. Sandbox moved to v2.1 and renamed the fields, no changelog, no email:\n\n| v2.0 | v2.1 |\n|---|---|\n| `challenge_result` | `authentication.status` |\n| `charge_id` | `payment.id` |\n| `result: \"Y\"/\"N\"` | `status: \"authenticated\"/\"rejected\"` |\n\nTicket #4468. Their answer is that v2.1 was \"announced in the developer portal\", which we don't have access to.\n\nParser rewritten with version negotiation so this can't happen silently again. Second rewrite in a week.\n\nI'll get the PM a number tomorrow."
+    },
+    {
+      "date": "2025-10-09",
+      "author": "tomas",
+      "body": "**Senior dev, 2025-10-09**\n\nHonest state.\n\nWorking: authorise up to the challenge, redirect URL, webhook receipt and verification, idempotency, state machine for the happy path, v2.0/v2.1 negotiation.\n\nNot working, and each of these blocks a merge on its own:\n- **Refunds.** The bank wants the original authentication reference to refund an SCA charge and we never stored it. Schema change plus a backfill.\n- **Persistence.** The repository is in memory. A deploy loses every in-flight payment.\n- **Reconciliation job.** Not started. Needs a scheduler we don't have.\n\nBest guess to minimum mergeable: **20–25h**. That's a guess, not an estimate — nobody has broken it out.\n\nI should have opened this for review two weeks ago instead of chasing a moving target. Three weeks of my hours are in here and nothing has merged."
+    },
+    {
+      "date": "2025-10-10",
+      "author": "sona",
+      "body": "**PM, 2025-10-10**\n\nStopping work on this today.\n\nBefore another hour goes in: this PR comes out of draft for review as-is, and the senior dev and the medior dev break the 20–25h out into actual line items so we know what a minimum mergeable gateway is. Then we descope to exactly that path so PAY-5 and PAY-6 can finish.\n\nI'm taking the SCA change to the client in parallel. ADR-0003 and the bank's own reply on #4417 are the evidence — they told us in writing on 2025-08-25 that the exemption applied, we estimated on it, and they changed it on 2025-09-26.\n\nNothing else starts on this until both exist."
+    }
+  ],
+
+  "PAY-5": [
+    {
+      "date": "2025-10-09",
+      "author": "tomas",
+      "body": "**Senior dev, 2025-10-09**\n\nOn the return URL: contract isn't settled yet, sorry. What I can tell you: the customer may come back to you *before* the webhook lands, so the return screen can't assume the payment is resolved. It'll need to poll or show a pending state.\n\nThat's a third screen on top of your two, and it's not in your 40h. Flag it to the PM rather than absorbing it."
+    }
+  ],
+
+  "PAY-6": [
+    {
+      "date": "2025-10-09",
+      "author": "marek",
+      "body": "**QA, 2025-10-09**\n\nFor the record on the 25 CZK fixtures: that is on QA. The suite was green for two days after the sandbox changed because every fixture sat under the exemption threshold, so we found out from a manual test instead of CI.\n\nFixtures now use realistic amounts. Everything downstream of `gateway` stays blocked until that PR has a stable interface — 12h of 35h used and the remaining 23h is all still ahead."
+    }
+  ]
+}

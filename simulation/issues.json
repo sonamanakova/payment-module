@@ -1,0 +1,36 @@
+{
+  "_note": "GitHub issues mirroring the Jira work items, created by seed_github.py. They give the repo a place where estimates and assumptions are visible without a Jira connector.",
+
+  "issues": [
+    {
+      "key": "PAY-3",
+      "title": "PAY-3: Payment gateway",
+      "labels": ["work-item", "blocked", "scope-changed"],
+      "body": "**Jira:** PAY-3 · **Owner:** senior_dev · **Estimate:** 40h · **Status:** In Progress\n\nPayment lifecycle on top of `bank_api` — authorise, capture, refund, plus the `Payment` model. What `orders` calls when a customer pays. ADR-0001 layer two.\n\n### The estimate assumed\n\n1. The charge endpoint is **synchronous** — one round trip, final answer.\n2. **No 3-D Secure / SCA** in v1. Confirmed in writing by the client's bank on 2025-08-25.\n3. **No webhooks, no inbound endpoints.** Outbound only.\n4. **No persistence** beyond the order record.\n5. Refunds are a single call, full amount only.\n\n40h ≈ three senior days wiring an existing HTTP client into the order flow, plus tests.\n\n### What is actually true\n\nAssumptions 1–4 are all false as of 2025-09-26. The bank's sandbox now requires strong customer authentication above 30 CZK, and confirmed on 2025-09-29 (#4417) that the exemption was their misconfiguration and production will behave the same way.\n\nSee ADR-0003. The work is now a persisted asynchronous state machine with an inbound webhook surface, an idempotency store, and a reconciliation job.\n\n### Not re-estimated\n\nHours have continued to be logged against the original 40h. Under a fixed-price contract that difference is the agency's margin, not the client's invoice.\n\n**PR:** draft since 2025-09-24"
+    },
+    {
+      "key": "PAY-2",
+      "title": "PAY-2: Bank API integration",
+      "labels": ["work-item", "done"],
+      "body": "**Jira:** PAY-2 · **Owner:** senior_dev · **Estimate:** 60h · **Actual:** 68h · **Status:** Done\n\nHTTP client for the Fictional Bank sandbox: OAuth2, HMAC request signing, retries, error mapping. Transport only.\n\n8h over. The bank's API guide v1.4 §4.2 documents the canonical signing string incorrectly; found the real format by brute force. Ticket #4381, no reply. Absorbed, not escalated.\n\nSame developer, same role, larger estimate than PAY-3 — and it merged. Worth keeping in mind when reading PAY-3: the difference is not the person.\n\n**PR:** merged 2025-09-17"
+    },
+    {
+      "key": "PAY-5",
+      "title": "PAY-5: Checkout frontend",
+      "labels": ["work-item", "blocked-by-PAY-3"],
+      "body": "**Jira:** PAY-5 · **Owner:** junior_dev · **Estimate:** 40h · **Status:** In Progress\n\nCheckout page, payment form, result screens.\n\nEstimated on two outcomes: paid and not paid. ADR-0003 adds a third — challenge redirect out to the bank and a return handler that may run before the webhook lands. Neither is in the 40h.\n\n30h used, and the remaining work is bigger than the 10h left.\n\n**PR:** open since 2025-10-08"
+    },
+    {
+      "key": "PAY-6",
+      "title": "PAY-6: Automated test suite",
+      "labels": ["work-item", "blocked-by-PAY-3"],
+      "body": "**Jira:** PAY-6 · **Owner:** qa · **Estimate:** 35h · **Status:** In Progress\n\nEnd-to-end suite over the payment flow, in CI.\n\n12h of 35h used — not because it is going well, because there is no stable interface to test against. The remaining 23h is still ahead, not saved.\n\nEvery fixture in the original suite charged 25 CZK, under the bank's 30 CZK exemption, so CI stayed green for two days after the sandbox changed while nothing real worked.\n\n**PR:** open since 2025-10-08"
+    },
+    {
+      "key": "CHANGE-1",
+      "title": "Change request: SCA was confirmed out of scope before we estimated",
+      "labels": ["commercial", "needs-client-decision"],
+      "body": "**Raised by:** pm, 2025-10-10\n\nThe client's bank confirmed in writing on **2025-08-25** that our merchant profile was exempt from PSD2 strong customer authentication and that SCA would be \"a phase two conversation\". PAY-3 was estimated at 40h on that basis, and the contract was signed fixed-price on that scope.\n\nOn **2025-09-26** the sandbox began requiring SCA. On **2025-09-29** the bank confirmed (ticket #4417) that the earlier behaviour was a misconfiguration on their side and that production will require SCA at go-live.\n\nThe delta is not a delivery failure and it is not small:\n\n- persisted `Payment` entity with an asynchronous lifecycle\n- inbound webhook endpoint, signature verification, idempotency store\n- reconciliation job for abandoned challenges (needs a scheduler this project does not have)\n- version-negotiating payload parser after the undocumented v2.1 change (#4468)\n- challenge redirect and return handling in checkout (PAY-5)\n- rewrite of the e2e suite (PAY-6)\n\nEvidence: ADR-0003, the bank's reply on #4417, and the 2025-08-25 confirmation email.\n\nFixed price means that unless this is agreed as a change order, all of it comes out of the agency's margin.\n\n**Decision needed from the client.**"
+    }
+  ]
+}
