@@ -33,5 +33,5 @@ If the work turns out to be materially different from what was estimated — a
 changed requirement, a wrong assumption, a rewrite — write an ADR in
 `docs/adr/`, link it from the pull request, and **re-estimate in Jira**.
 
-Logging the extra hours against the original estimate hides the problem until
-the money is already spent. On a fixed-price contract that money is ours.
+Logging the extra hours against the original estimate means nobody sees the
+gap until well after the fact. On a fixed-price contract that gap is ours.

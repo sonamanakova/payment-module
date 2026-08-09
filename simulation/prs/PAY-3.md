@@ -15,10 +15,10 @@ labels: [blocked, needs-decision, scope-changed]
 The payment lifecycle on top of `bank_api` — authorise, capture, refund — and
 the `Payment` model that `orders` calls. ADR-0001 layer two.
 
-Draft because refunds aren't in yet. **Update 2025-09-30: draft for a very
-different reason now, see below.**
+Opened as draft on 2025-09-24 because refunds weren't in yet. Still a draft on
+2025-10-09, different reason now, see below.
 
-## Original plan (2025-09-24)
+## 2025-09-24
 
 Thin wrapper over the client PAY-2 already built. Happy path worked end to end
 against the sandbox on day one:
@@ -29,22 +29,21 @@ against the sandbox on day one:
 - [ ] tests
 - [ ] docs
 
-Expected to be out of draft by 2025-09-26.
+Figured this would be out of draft by 2025-09-26.
 
-## What actually happened
+## 2025-09-26 to 2025-09-29
 
-On 2025-09-26 the sandbox started answering `402 sca_required` for every charge
-above 30 CZK. The bank confirmed on 2025-09-29 (#4417) that this is permanent —
-our written SCA exemption from August was a sandbox misconfiguration on their
-side, and production will require strong customer authentication at go-live.
+Sandbox started answering `402 sca_required` for every charge above 30 CZK on
+the 26th. Bank confirmed on the 29th (#4417) that it's permanent — the written
+SCA exemption from August was apparently a sandbox misconfig on their end, and
+production will require SCA at go-live too.
 
-That kills the design in ADR-0002, not just some of the code. A charge is no
-longer request-in-result-out. It is: get a challenge, send the customer to the
-bank, and be told the outcome later on a webhook we do not have.
+So ADR-0002's design doesn't hold. A charge isn't request-in-result-out
+anymore — it's a challenge, the customer goes to the bank, and we find out the
+outcome later on a webhook we don't have.
 
 [ADR-0003](../../docs/adr/0003-async-sca-state-machine.md) has the full
-reasoning. Short version — four things had to be built that were not in the 40h
-estimate:
+writeup. Four things needed that weren't in the 40h estimate:
 
 1. A persisted `Payment` entity with a real lifecycle (`pending_challenge` lasts
    up to 15 minutes and survives restarts).
@@ -57,14 +56,14 @@ estimate:
 
 ## Rework
 
-Two rewrites, both forced:
+Two rewrites so far:
 
 | When | What was thrown away | Why |
 |---|---|---|
 | 2025-09-30 | Synchronous gateway + its tests + the `PaymentResult` shape `orders` and `checkout` were written against | ADR-0002 superseded |
 | 2025-10-07 | Webhook parser | Sandbox v2.1 renamed `challenge_result` → `authentication.status`, `charge_id` → `payment.id` (#4468) |
 
-## Where it stands (2025-10-09)
+## Where it stands, 2025-10-09
 
 Working:
 - [x] `authorise()` up to the challenge, challenge redirect URL returned
@@ -83,13 +82,13 @@ Not working:
 - [ ] **Tests** — the e2e suite is skipped. It asserts on a function signature
       that no longer exists.
 
-## Why this is still a draft and not a review
+## Why still draft, not review
 
-There is no version of this that merges cleanly right now: without persistence
-it loses payments, and without reconciliation it strands them. I've kept working
-rather than opening it for review because the shape kept changing under me.
-That was probably the wrong call — three weeks of hours have gone in against a
-40h estimate with nothing merged.
+Nothing here merges cleanly right now — without persistence it loses payments,
+without reconciliation it strands them. Kept working instead of opening for
+review because the requirements underneath it kept moving. In hindsight should
+have opened this for review earlier. Three weeks of hours in against a 40h
+estimate, nothing merged.
 
 ## What I need
 

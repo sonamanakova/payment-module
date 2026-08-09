@@ -35,4 +35,4 @@ onto the order by the caller and that is the end of it. No background jobs.
 
 The exemption did not exist. The sandbox was misconfigured and the bank fixed it
 on 2025-09-26; production was always going to require SCA. The risk noted above
-materialised seven days after this ADR was accepted. See ADR-0003.
+turned out to be real, seven days after this ADR was accepted. See ADR-0003.
