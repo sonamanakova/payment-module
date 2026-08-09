@@ -1,4 +1,4 @@
-"""HTTP client for the Fictional Bank sandbox. PAY-2.
+"""HTTP client for the Fictional Bank sandbox. PAY-2, merged.
 
 Transport only: authentication, request signing, retries, error mapping. It
 knows nothing about orders or the payment lifecycle -- that is gateway's job
@@ -13,7 +13,7 @@ import time
 import requests
 
 from ..config import settings
-from .errors import BankAuthError, BankError
+from .errors import BankAuthError, BankError, ScaRequired
 
 TOKEN_PATH = "/oauth/token"
 CHARGES_PATH = "/v1/charges"
@@ -90,22 +90,47 @@ class BankClient:
 
     # -- charges ------------------------------------------------------------
 
-    def charge(self, amount_czk, order_reference):
+    def charge(self, amount_czk, order_reference, return_url=None):
         """Create a charge.
 
-        Synchronous: the sandbox returns the final state of the charge in this
-        same response (verified 2025-09-18). PAY-3 can be a thin wrapper.
+        Under the low-value exemption threshold this settles in one round trip
+        and returns a captured charge. Above it, since 2025-09-26, the bank
+        answers 402 with a 3-D Secure challenge instead and the result arrives
+        later on a webhook -- see ScaRequired and ADR-0003.
         """
-        body = _json(
-            {
-                "amount": amount_czk,
-                "currency": settings.currency,
-                "reference": order_reference,
-            }
-        )
-        response = self._request("POST", CHARGES_PATH, body)
+        body = {
+            "amount": amount_czk,
+            "currency": settings.currency,
+            "reference": order_reference,
+        }
+        if return_url:
+            body["return_url"] = return_url
+
+        response = self._request("POST", CHARGES_PATH, _json(body))
+
+        if response.status_code == 402:
+            payload = response.json()
+            if payload.get("status") == "sca_required":
+                raise ScaRequired(
+                    challenge_id=payload["challenge_id"],
+                    challenge_url=payload["challenge_url"],
+                    expires_in=payload.get("expires_in", 600),
+                )
         if response.status_code >= 400:
             raise BankError(f"charge failed: {response.status_code} {response.text}")
+
+        return response.json()
+
+    def get_charge(self, charge_id):
+        """Current state of a charge.
+
+        Needed by the reconciliation job: abandoned challenges never produce a
+        terminal webhook, so polling is the only way those payments ever close.
+        Job is not written yet -- PAY-3.
+        """
+        response = self._request("GET", f"{CHARGES_PATH}/{charge_id}")
+        if response.status_code >= 400:
+            raise BankError(f"charge lookup failed: {response.status_code}")
         return response.json()
 
     def refund(self, charge_id, amount_czk=None):

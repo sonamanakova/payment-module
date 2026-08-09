@@ -1,11 +1,17 @@
-"""HTTP surface. PAY-1 (health), PAY-4 (orders)."""
+"""HTTP surface. PAY-1 (health), PAY-4 (orders), PAY-3 (payments, webhook)."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, Request
 
+from .gateway.payment import PaymentGateway
+from .gateway.repository import InMemoryPaymentRepository
+from .gateway.webhooks import WebhookHandler
 from .orders.models import Order, OrderStatus
 
-app = FastAPI(title="Payment module", version="0.3.0")
+app = FastAPI(title="Payment module", version="0.4.0")
 
+repository = InMemoryPaymentRepository()
+gateway = PaymentGateway(repository)
+webhooks = WebhookHandler(repository)
 orders: dict[str, Order] = {}
 
 
@@ -14,30 +20,34 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/orders")
-def create_order(customer_id: str, amount_czk: int):
-    order = Order(order_id=_new_order_id(), customer_id=customer_id,
-                  amount_czk=amount_czk)
-    orders[order.order_id] = order
-    return order
-
-
-@app.get("/orders/{order_id}")
-def get_order(order_id: str):
-    return orders[order_id]
-
-
 @app.post("/orders/{order_id}/pay")
 def pay(order_id: str, return_url: str):
-    """Start payment for an order.
+    """Start payment for an order. PAY-4 calling into PAY-3.
 
-    Calls into gateway (PAY-3) through the interface from ADR-0001, so this
-    merges before gateway is finished.
+    This used to answer "paid" or "not paid". It cannot any more -- above the
+    exemption threshold the customer has to authenticate at the bank first, so
+    the honest answer is "go here and we will find out later". PAY-5 has to
+    render that redirect, which is not in its estimate either.
     """
-    raise NotImplementedError("waiting on PAY-3")
+    order = orders[order_id]
+    payment = gateway.authorise(order_id, order.amount_czk, return_url)
+    order.transition_to(OrderStatus.AWAITING_PAYMENT)
+    order.payment_id = payment.payment_id
+
+    return {
+        "payment_id": payment.payment_id,
+        "state": payment.state.value,
+        "challenge_url": payment.challenge_url,
+    }
 
 
-def _new_order_id():
-    import uuid
+@app.post("/webhooks/bank")
+async def bank_webhook(request: Request, x_signature: str = Header(default="")):
+    """Where the bank tells us how a challenge ended. PAY-3, added by ADR-0003.
 
-    return f"ord_{uuid.uuid4().hex[:12]}"
+    The first inbound endpoint this project has ever had. It needs to be
+    publicly reachable in every environment including local development, which
+    is a deployment problem nobody scoped.
+    """
+    raw = await request.body()
+    return webhooks.handle(raw, x_signature, await request.json())
